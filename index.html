@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Dependency Map of AI</title>
+<style>
+  :root {
+    /* Pure Neutral / Graphite Palette (No blue undertones) */
+    --bg: #0a0a0a;
+    --bg2: #141414;
+    --ink: #f0f0f0;
+    --ink-dim: #a3a3a3;
+    --chip: #1e1e1e;
+    --chip-edge: #333333;
+    --rail: #737373;
+
+    /* Lineage Colors - Modern, vibrant, distinct */
+    --cyan: #2dd4bf;       /* Teal/Cyan */
+    --cyan-soft: rgba(45, 212, 191, 0.15);
+    --magenta: #fb7185;    /* Rose/Magenta */
+    --magenta-soft: rgba(251, 113, 133, 0.15);
+    --gold: #fbbf24;       /* Shared overlap */
+    --gold-soft: rgba(251, 191, 36, 0.15);
+    --up: #fb923c;         /* Orange (Replaced the old blue) */
+    --up-soft: rgba(251, 146, 60, 0.15);
+  }
+  
+  * { box-sizing: border-box; }
+  
+  html, body {
+    margin: 0;
+    background: radial-gradient(120% 120% at 50% -10%, #1a1a1a 0%, var(--bg) 55%);
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, "Inter", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; 
+    min-height: 100vh;
+  }
+  
+  .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  header { padding: 26px 26px 8px; max-width: 1500px; margin: 0 auto; }
+  h1 { font-size: 23px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+  .sub { color: var(--ink-dim); font-size: 13.5px; margin: 7px 0 0; max-width: 760px; line-height: 1.5; }
+
+  /* control bar */
+  .bar { max-width: 1500px; margin: 18px auto 0; padding: 0 26px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--chip-edge); border-radius: 9px; overflow: hidden; background: var(--bg2); }
+  .seg button { background: transparent; border: 0; color: var(--ink-dim); padding: 7px 14px; font-size: 12.5px; cursor: pointer; letter-spacing: .02em; font-family: inherit; transition: color .15s, background .15s; }
+  .seg button.on { background: var(--cyan-soft); color: var(--cyan); }
+  
+  .pill { background: var(--bg2); border: 1px solid var(--chip-edge); color: var(--ink-dim); border-radius: 8px; padding: 7px 12px; font-size: 12px; cursor: pointer; font-family: inherit; letter-spacing: .01em; transition: border-color .15s, color .15s; }
+  .pill:hover { color: var(--ink); border-color: #555; }
+  .bar .lab { color: var(--rail); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; margin-right: 2px; }
+  .spacer { flex: 1 1 40px; }
+
+  /* map & stacking contexts */
+  .wrap { max-width: 1500px; margin: 14px auto 0; padding: 0 18px 30px; }
+  .map { position: relative; z-index: 0; } /* Establishes root z-index for children */
+  
+  /* SVG Threads sit at Z:2 (Above inactive nodes, below active nodes) */
+  svg.threads { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; overflow: visible; }
+  
+  .stratum { position: relative; display: grid; grid-template-columns: 104px 1fr; gap: 14px; align-items: start; padding: 18px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+  .stratum:first-child { border-top: 0; }
+  
+  /* Rails sit above everything to remain readable */
+  .rail { position: sticky; left: 0; z-index: 4; }
+  .rail .name { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--rail); font-weight: 600; }
+  .rail .count { font-size: 10.5px; color: #555; margin-top: 3px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  /* Base nodes sit at Z:1 */
+  .node {
+    position: relative; z-index: 1;
+    background: var(--chip); border: 1px solid var(--chip-edge); border-radius: 10px;
+    padding: 9px 13px; cursor: pointer; text-align: left; color: var(--ink); font-family: inherit;
+    font-size: 13px; line-height: 1.18; max-width: 230px;
+    transition: transform .12s, opacity .18s, border-color .18s, box-shadow .18s, background .18s, filter .18s;
+  }
+  .node:hover { border-color: #555; transform: translateY(-1px); z-index: 5; }
+  .node:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  .node .t { font-weight: 560; }
+  .node .s { display: block; font-size: 10.5px; color: var(--ink-dim); margin-top: 2px; font-weight: 400; }
+
+  /* Inactive states (40% dim via opacity + slight grayscale for contrast mapping) */
+  .map.active .node { opacity: 0.6; filter: grayscale(40%); }
+  
+  /* Active states sit at Z:3 (Above the SVG lines) */
+  .node.lin, .node.up, .node.sel, .node.aonly, .node.bonly, .node.shared, .node.sela, .node.selb {
+    z-index: 3;
+    opacity: 1 !important;
+    filter: none !important;
+  }
+
+  .node.lin { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 0 22px -6px var(--cyan); background: linear-gradient(180deg, var(--cyan-soft), transparent); }
+  .node.up { border-color: var(--up); box-shadow: 0 0 0 1px var(--up), 0 0 22px -6px var(--up); background: linear-gradient(180deg, var(--up-soft), transparent); }
+  
+  .node.sel { border-color: var(--cyan); background: var(--cyan); color: #002e26; box-shadow: 0 0 26px -4px var(--cyan); }
+  .node.sel .s { color: #004539; }
+
+  .node.aonly { border-color: var(--cyan); background: linear-gradient(180deg, var(--cyan-soft), transparent); }
+  .node.bonly { border-color: var(--magenta); background: linear-gradient(180deg, var(--magenta-soft), transparent); }
+  .node.shared { border-color: var(--gold); background: linear-gradient(180deg, var(--gold-soft), transparent); box-shadow: 0 0 0 1px var(--gold), 0 0 22px -6px var(--gold); }
+  
+  .node.sela { border-color: var(--cyan); background: var(--cyan); color: #002e26; box-shadow: 0 0 26px -4px var(--cyan); }
+  .node.sela .s { color: #004539; }
+  .node.selb { border-color: var(--magenta); background: var(--magenta); color: #3b000f; box-shadow: 0 0 26px -4px var(--magenta); }
+  .node.selb .s { color: #5e0018; }
+
+  /* info panel */
+  .panel { max-width: 1500px; margin: 0 auto; padding: 0 26px; }
+  .card { background: var(--bg2); border: 1px solid var(--chip-edge); border-radius: 12px; padding: 16px 18px; min-height: 54px; }
+  .card .ttl { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .card .meta { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--rail); margin-bottom: 8px; }
+  .card p { margin: 0 0 10px; color: var(--ink-dim); font-size: 13px; line-height: 1.5; }
+  .card .grp { font-size: 12.5px; color: var(--ink-dim); margin: 6px 0; }
+  .card .grp b { color: var(--ink); font-weight: 600; }
+  .tag { display: inline-block; background: #262626; border: 1px solid var(--chip-edge); border-radius: 6px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 11.5px; color: var(--ink); }
+  .seam { color: var(--gold); }
+  .hint { color: var(--rail); font-size: 12.5px; }
+
+  .legend { max-width: 1500px; margin: 14px auto 30px; padding: 0 26px; display: flex; flex-wrap: wrap; gap: 18px; color: var(--ink-dim); font-size: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 22px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  /* Mobile responsiveness */
+  @media (max-width: 720px) {
+    .stratum { grid-template-columns: 1fr; gap: 8px; padding: 16px 0; }
+    .rail { position: static; margin-bottom: 2px; }
+    .node { font-size: 12px; padding: 8px 11px; max-width: 100%; }
+    h1 { font-size: 19px; }
+    .bar { padding: 0 16px; gap: 8px; }
+    header { padding: 20px 16px 8px; }
+    .panel { padding: 0 16px; }
+    .wrap { padding: 0 16px 30px; }
+    .legend { padding: 0 16px; gap: 12px; }
+    .pill { padding: 6px 10px; font-size: 11.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Dependency Map of AI</h1>
+  <p class="sub">Reading upward: every layer is built on the ones beneath it, regardless of when it was invented. Click any box to ignite its full lineage. Switch to <b style="color:var(--ink)">Compare</b> and pick two architectures to see where their substrate overlaps — the convergence that grows denser the lower you go.</p>
+</header>
+
+<div class="bar">
+  <span class="lab">Mode</span>
+  <div class="seg" id="mode">
+    <button data-mode="explore" class="on">Explore</button>
+    <button data-mode="compare">Compare</button>
+  </div>
+  <span class="spacer"></span>
+  <span class="lab">Trace</span>
+  <button class="pill" data-trace="transformer">Transformers</button>
+  <button class="pill" data-trace="cnn">CNNs</button>
+  <button class="pill" data-trace="snn">SNNs</button>
+  <button class="pill" data-trace="rnn">RNNs</button>
+  <button class="pill" data-trace="diffusion">Diffusion</button>
+  <button class="pill" data-compare="cnn,transformer">CNN&nbsp;vs&nbsp;Transformer</button>
+  <button class="pill" id="reset">Reset</button>
+</div>
+
+<div class="wrap">
+  <div class="map" id="map">
+    <svg class="threads" id="threads"></svg>
+  </div>
+</div>
+
+<div class="panel"><div class="card" id="info"></div></div>
+
+<div class="legend">
+  <span><i class="sw" style="background:var(--cyan)"></i> Selected / lineage A</span>
+  <span><i class="sw" style="background:var(--magenta)"></i> Lineage B (compare)</span>
+  <span><i class="sw" style="background:var(--gold)"></i> Shared substrate</span>
+  <span><i class="sw" style="background:var(--up)"></i> Systems that use it</span>
+</div>
+
+<script>
+const LAYERS = [
+  {id:"systems",      name:"Systems"},
+  {id:"architectures",name:"Architectures"},
+  {id:"mechanisms",   name:"Mechanisms"},
+  {id:"primitives",   name:"Primitives"},
+  {id:"learning",     name:"Learning"},
+  {id:"foundations",  name:"Foundations"},
+];
+
+const N = [
+  // ---- foundations
+  {id:"linalg",layer:"foundations",t:"Linear algebra",desc:"Vectors, matrices, tensors — the language every network computes in."},
+  {id:"calculus",layer:"foundations",t:"Calculus",desc:"Derivatives and the chain rule that make gradient learning possible."},
+  {id:"prob",layer:"foundations",t:"Probability & statistics",desc:"Distributions, likelihood, expectation — uncertainty made formal."},
+  {id:"discrete",layer:"foundations",t:"Discrete math",desc:"Combinatorics, logic, graphs and sets underlying structure and search."},
+  {id:"infotheory",layer:"foundations",t:"Information theory",desc:"Entropy, mutual information, coding — the bookkeeping of compression."},
+  {id:"optim",layer:"foundations",t:"Optimization theory",desc:"Convexity, gradients, metaheuristics — how parameters get chosen."},
+  {id:"dynsys",layer:"foundations",t:"Dynamical systems / ODEs",desc:"State evolving in time; stability, attractors, continuous dynamics."},
+  {id:"geometry",layer:"foundations",t:"Topology & geometry",desc:"Manifolds, distance, curvature — the shape priors data lives on."},
+  {id:"graphtheory",layer:"foundations",t:"Graph theory",desc:"Nodes, edges, adjacency — relational structure as a first-class object."},
+
+  // ---- learning
+  {id:"backprop",layer:"learning",t:"Backpropagation",deps:["calculus","linalg"],desc:"Reverse-mode credit assignment via the chain rule."},
+  {id:"sgd",layer:"learning",t:"SGD & variants",deps:["optim","calculus","prob"],desc:"Stochastic gradient descent and its descendants (Adam, momentum…)."},
+  {id:"perceptron",layer:"learning",t:"Perceptron rule",deps:["linalg","optim"],desc:"The original error-correcting weight update for a linear unit."},
+  {id:"hebbian",layer:"learning",t:"Hebbian learning",deps:["prob","dynsys"],desc:"Cells that fire together wire together — unsupervised co-activation."},
+  {id:"stdp",layer:"learning",t:"Spike-timing plasticity",deps:["dynsys","calculus","hebbian"],desc:"STDP & surrogate gradients — how spiking nets adjust weights."},
+  {id:"rl",layer:"learning",t:"Reinforcement learning",deps:["prob","optim","calculus"],desc:"Learning behavior from reward signals over time."},
+  {id:"ssl",layer:"learning",t:"Self-supervised / contrastive",deps:["infotheory","prob"],desc:"Supervision invented from the data's own structure."},
+  {id:"ebl",layer:"learning",t:"Energy-based learning",deps:["prob","calculus","infotheory"],desc:"Shape an energy surface so good configurations sit in the valleys."},
+  {id:"varinf",layer:"learning",t:"Variational inference",deps:["prob","calculus","infotheory"],desc:"Approximate intractable posteriors by optimizing a bound."},
+  {id:"bayesian",layer:"learning",t:"Bayesian inference",deps:["prob","infotheory"],desc:"Update beliefs over hypotheses given evidence."},
+  {id:"em",layer:"learning",t:"Expectation–Maximization",deps:["prob","optim"],desc:"Alternate latent-assignment and parameter fitting until convergence."},
+  {id:"evo",layer:"learning",t:"Evolutionary & swarm (GA · ES · PSO · ACO)",deps:["optim","prob","discrete"],desc:"Gradient-free, population-based search. PSO lives here — a way to train, not an architecture."},
+
+  // ---- primitives
+  {id:"tensors",layer:"primitives",t:"Tensors",deps:["linalg"],desc:"N-dimensional arrays; the data carrier for every operation."},
+  {id:"dense",layer:"primitives",t:"Dense layers",deps:["linalg","backprop","sgd"],desc:"Fully-connected affine maps + bias — the universal building block."},
+  {id:"embeddings",layer:"primitives",t:"Embeddings",deps:["linalg","backprop","geometry"],desc:"Learned vector coordinates that place tokens/items in a geometry."},
+  {id:"nonlin",layer:"primitives",t:"Non-linearities (ReLU / sigmoid)",deps:["calculus"],desc:"Activation functions — without them depth collapses to a line."},
+  {id:"logicgates",layer:"primitives",t:"Logic gates (conceptual)",deps:["discrete"],desc:"Boolean primitives a single neuron can approximate."},
+  {id:"sparsecoding",layer:"primitives",t:"Sparse coding",deps:["linalg","optim"],desc:"Represent inputs with few active basis elements."},
+  {id:"poolinglayers",layer:"primitives",t:"Pooling layers",deps:["linalg"],desc:"Downsampling units that summarize local regions."},
+  {id:"recurrence",layer:"primitives",t:"Recurrent state / feedback",deps:["dense","dynsys"],desc:"A hidden state fed back through time — memory across a sequence."},
+  {id:"spiking",layer:"primitives",t:"Spiking neurons (LIF)",deps:["dynsys","stdp"],desc:"Leaky integrate-and-fire units that communicate in discrete spikes."},
+  {id:"latents",layer:"primitives",t:"Latent variables",deps:["prob","varinf"],desc:"Unobserved factors a model infers behind the data."},
+  {id:"markov",layer:"primitives",t:"Markov chains",deps:["prob","discrete"],desc:"State transitions where the future depends only on the present."},
+
+  // ---- mechanisms
+  {id:"attention",layer:"mechanisms",t:"Attention",deps:["embeddings","dense","prob"],desc:"Content-based weighting — each element looks at all others."},
+  {id:"convolution",layer:"mechanisms",t:"Convolution",deps:["tensors","dense","geometry"],desc:"Weight-shared local filters that exploit translation structure."},
+  {id:"pooling",layer:"mechanisms",t:"Pooling",deps:["poolinglayers","tensors"],desc:"Aggregate and downsample to gain invariance."},
+  {id:"skip",layer:"mechanisms",t:"Skip connections",deps:["dense"],desc:"Identity shortcuts that let gradients flow through depth."},
+  {id:"gating",layer:"mechanisms",t:"Gating",deps:["nonlin","dense"],desc:"Learned valves that control what information passes."},
+  {id:"striding",layer:"mechanisms",t:"Striding",deps:["tensors"],desc:"Step size that subsamples spatially during a sweep."},
+  {id:"ensembling",layer:"mechanisms",t:"Ensembling",deps:["prob"],desc:"Combine many weak models — bagging, boosting, voting."},
+  {id:"sampling",layer:"mechanisms",t:"Sampling (MCMC)",deps:["prob","markov"],desc:"Draw from distributions you can't write down in closed form."},
+  {id:"msgpass",layer:"mechanisms",t:"Message passing",deps:["dense","graphtheory"],desc:"Nodes exchange and aggregate information along edges."},
+  {id:"denoising",layer:"mechanisms",t:"Denoising / diffusion",deps:["sampling","latents","nonlin"],desc:"Iteratively reverse added noise to generate samples."},
+  {id:"adversarial",layer:"mechanisms",t:"Adversarial training",deps:["dense","sgd"],desc:"A generator and critic improve by competing."},
+  {id:"normalization",layer:"mechanisms",t:"Normalization",deps:["tensors","prob"],desc:"Rescale activations (batch/layer norm) to stabilize training."},
+  {id:"spikecoding",layer:"mechanisms",t:"Spike / temporal coding",deps:["spiking"],desc:"Encode information in spike timing and rate."},
+  {id:"ssmscan",layer:"mechanisms",t:"Selective state-space scan",deps:["recurrence","tensors"],desc:"Linear-time sequence mixing with a compressed, selective state."},
+  {id:"kerneltrick",layer:"mechanisms",t:"Kernel methods",deps:["linalg","geometry"],desc:"Implicit high-dimensional similarity without coordinates."},
+  {id:"splitting",layer:"mechanisms",t:"Recursive splitting",deps:["discrete","infotheory"],desc:"Partition data by greedy information-gain decisions."},
+
+  // ---- architectures
+  {id:"mlp",layer:"architectures",t:"MLPs",deps:["dense","nonlin","backprop","perceptron"],desc:"Stacked dense layers — the universal approximator."},
+  {id:"cnn",layer:"architectures",t:"CNNs",deps:["convolution","pooling","striding","nonlin","backprop"],desc:"Convolutional nets for grid-structured signals like images."},
+  {id:"resnet",layer:"architectures",t:"ResNets",deps:["convolution","skip","normalization","backprop"],desc:"Very deep CNNs made trainable by residual shortcuts."},
+  {id:"unet",layer:"architectures",t:"U-Nets",deps:["convolution","skip","pooling"],desc:"Encoder-decoder with skips — workhorse for dense prediction."},
+  {id:"rnn",layer:"architectures",t:"RNNs",deps:["recurrence","nonlin","backprop"],desc:"Sequence models with a looping hidden state (trained by BPTT)."},
+  {id:"lstm",layer:"architectures",t:"LSTMs",deps:["recurrence","gating","backprop"],desc:"Gated recurrence that tames vanishing gradients over long spans."},
+  {id:"gru",layer:"architectures",t:"GRUs",deps:["recurrence","gating","backprop"],desc:"A leaner gated recurrent cell, sibling to the LSTM."},
+  {id:"transformer",layer:"architectures",t:"Transformers",deps:["attention","embeddings","normalization","skip","backprop"],desc:"Attention-only sequence model; the spine of modern LLMs."},
+  {id:"ssm",layer:"architectures",t:"State space models (Mamba)",deps:["ssmscan","normalization","backprop"],desc:"Sequence models that carry compressed state instead of a verbatim log."},
+  {id:"gnn",layer:"architectures",t:"GNNs",deps:["msgpass","embeddings","backprop"],desc:"Networks that learn over graph-structured relations."},
+  {id:"ae",layer:"architectures",t:"Autoencoders",deps:["dense","nonlin","backprop"],desc:"Compress to a bottleneck and reconstruct — learned coding."},
+  {id:"vae",layer:"architectures",t:"VAEs",deps:["ae","latents","varinf","sampling"],desc:"Autoencoders with a probabilistic, sampleable latent space."},
+  {id:"gan",layer:"architectures",t:"GANs",deps:["adversarial","dense","nonlin","sgd"],desc:"Generator vs. discriminator producing sharp samples."},
+  {id:"diffusion",layer:"architectures",t:"Diffusion models",deps:["denoising","unet","latents","varinf"],desc:"Generate by learning to reverse a noising process."},
+  {id:"ebm",layer:"architectures",t:"Energy-based (Hopfield / Boltzmann)",deps:["ebl","sampling","dense"],desc:"Associative memory & generative models defined by an energy surface."},
+  {id:"snn",layer:"architectures",t:"SNNs",deps:["spiking","spikecoding","stdp"],desc:"Spiking nets — event-driven, biologically inspired, energy-frugal."},
+  {id:"jepa",layer:"architectures",t:"JEPA",deps:["embeddings","ssl","attention"],desc:"Predict in latent (embedding) space rather than pixels/tokens."},
+  {id:"moe",layer:"architectures",t:"Mixture-of-Experts",deps:["gating","dense","ensembling"],desc:"Route each input to a few specialist sub-networks."},
+  {id:"reservoir",layer:"architectures",t:"Reservoir computing (ESN / LSM)",deps:["recurrence","sparsecoding"],desc:"Fixed random dynamics; only a read-out is trained."},
+  {id:"neuralode",layer:"architectures",t:"Neural ODEs",deps:["dynsys","recurrence","backprop"],desc:"Depth as continuous time — layers become an ODE solver."},
+  {id:"som",layer:"architectures",t:"Self-organizing maps",deps:["hebbian","geometry"],desc:"Unsupervised topology-preserving projection to a grid."},
+  {id:"svm",layer:"architectures",t:"SVMs",deps:["kerneltrick","optim"],desc:"Max-margin classifiers, kernelized for non-linear boundaries."},
+  {id:"trees",layer:"architectures",t:"Tree ensembles (RF / GBM)",deps:["splitting","ensembling"],desc:"Forests and boosted trees — dominant on tabular data."},
+  {id:"gp",layer:"architectures",t:"Gaussian processes",deps:["kerneltrick","prob","bayesian"],desc:"Distributions over functions with calibrated uncertainty."},
+  {id:"hmm",layer:"architectures",t:"Hidden Markov models",deps:["markov","em","sampling"],desc:"Latent-state sequence models for speech, tagging, bioinformatics."},
+  {id:"kmeans",layer:"architectures",t:"k-means / clustering",deps:["geometry","em"],desc:"Partition data into geometric groups without labels."},
+  {id:"bayesnet",layer:"architectures",t:"Bayesian networks",deps:["bayesian","graphtheory","prob"],desc:"Directed graphs of conditional dependence among variables."},
+
+  // ---- systems
+  {id:"llm",layer:"systems",t:"LLMs",deps:["transformer","moe","ssm"],desc:"Large language models for text understanding and generation."},
+  {id:"chatbot",layer:"systems",t:"Chatbots",deps:["transformer","rnn"],desc:"Conversational interfaces over a language backbone."},
+  {id:"multimodal",layer:"systems",t:"Multimodal",deps:["transformer","cnn","vae"],desc:"Joint reasoning across text, image, audio."},
+  {id:"agents",layer:"systems",t:"AI agents",deps:["transformer","rl"],desc:"Models that plan, act, and use tools toward goals."},
+  {id:"imagegen",layer:"systems",t:"Image generators",deps:["diffusion","gan","vae","unet"],desc:"Text-to-image and editing systems."},
+  {id:"videogen",layer:"systems",t:"Video generation",deps:["diffusion","transformer"],desc:"Temporally coherent generative video."},
+  {id:"speech",layer:"systems",t:"Speech & audio",deps:["transformer","rnn","cnn"],desc:"Recognition, synthesis, and audio understanding."},
+  {id:"robotics",layer:"systems",t:"Robotics",deps:["rl","cnn","transformer","snn"],desc:"Perception, control, and policy for embodied systems."},
+  {id:"driving",layer:"systems",t:"Autonomous vehicles",deps:["cnn","transformer","rl"],desc:"Perception and planning for self-driving."},
+  {id:"recsys",layer:"systems",t:"Recommender systems",deps:["gnn","mlp","transformer"],desc:"Rank items to user preferences at scale."},
+  {id:"rag",layer:"systems",t:"Search & RAG",deps:["transformer","gnn"],desc:"Retrieval-grounded generation over document corpora."},
+  {id:"forecasting",layer:"systems",t:"Time-series forecasting",deps:["rnn","ssm","transformer","gp"],desc:"Predict future values from sequential history."},
+  {id:"gameplay",layer:"systems",t:"Game playing & control",deps:["rl","cnn","mlp"],desc:"Agents that master games and control problems."},
+  {id:"sciml",layer:"systems",t:"Scientific ML",deps:["gnn","neuralode","diffusion"],desc:"Molecules, simulation, and discovery."},
+  {id:"neuromorphic",layer:"systems",t:"Neuromorphic / edge AI",deps:["snn","reservoir"],desc:"Low-power event-driven inference on specialized hardware."},
+  {id:"anomaly",layer:"systems",t:"Anomaly detection",deps:["ae","svm","gp"],desc:"Flag rare deviations from learned normal behavior."},
+];
+
+// indexes
+const BY = {};            N.forEach(n=>BY[n.id]=n);
+const DEPS = {};          N.forEach(n=>DEPS[n.id]=n.deps||[]);
+const USERS = {};         N.forEach(n=>USERS[n.id]=[]);
+N.forEach(n=>(n.deps||[]).forEach(d=>USERS[d]&&USERS[d].push(n.id)));
+const layerName = id=>LAYERS.find(l=>l.id===BY[id].layer).name;
+
+// transitive ancestors
+function ancestors(id){
+  const seen=new Set(), stack=[...DEPS[id]];
+  while(stack.length){const x=stack.pop(); if(!seen.has(x)){seen.add(x); DEPS[x].forEach(d=>stack.push(d));}}
+  return seen;
+}
+function descendants(id){
+  const seen=new Set(), stack=[...USERS[id]];
+  while(stack.length){const x=stack.pop(); if(!seen.has(x)){seen.add(x); USERS[x].forEach(d=>stack.push(d));}}
+  return seen;
+}
+
+// ---- build DOM
+const map = document.getElementById("map");
+const svg = document.getElementById("threads");
+const elOf = {};
+
+LAYERS.forEach(L=>{
+  const s = document.createElement("div"); 
+  s.className = "stratum";
+  const members = N.filter(n=>n.layer===L.id);
+  s.innerHTML = `<div class="rail"><div class="name">${L.name}</div><div class="count mono">${members.length} nodes</div></div>`;
+  
+  const row = document.createElement("div"); 
+  row.className = "row";
+  
+  members.forEach(n=>{
+    const b = document.createElement("button"); 
+    b.className = "node"; 
+    b.dataset.id = n.id;
+    b.innerHTML = `<span class="t">${n.t}</span>`;
+    b.addEventListener("click", () => pick(n.id));
+    row.appendChild(b); 
+    elOf[n.id] = b;
+  });
+  
+  s.appendChild(row); 
+  map.insertBefore(s, svg.nextSibling);
+});
+
+// ---- state
+let mode = "explore", selA = null, selB = null;
+const info = document.getElementById("info");
+
+function setMode(m){
+  if (mode === m) return;
+  mode = m; 
+  selA = selB = null;
+  document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x.dataset.mode === m));
+  clear();
+}
+document.querySelectorAll('#mode button').forEach(x => x.addEventListener('click', () => setMode(x.dataset.mode)));
+document.getElementById('reset').addEventListener('click', () => { selA = selB = null; clear(); });
+
+document.querySelectorAll('[data-trace]').forEach(b => b.addEventListener('click', () => {
+  setMode('explore');
+  pick(b.dataset.trace);
+}));
+
+document.querySelectorAll('[data-compare]').forEach(b => b.addEventListener('click', () => {
+  const [a,c] = b.dataset.compare.split(','); 
+  setMode('compare'); 
+  selA = a; 
+  selB = c; 
+  renderCompare();
+}));
+
+// Gracefully deselect when clicking outer canvas bounds
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.node') && 
+      !e.target.closest('.pill') && 
+      !e.target.closest('.seg') && 
+      !e.target.closest('header') &&
+      !e.target.closest('.panel') &&
+      !e.target.closest('.rail') &&
+      !e.target.closest('.legend')) {
+    selA = null;
+    selB = null;
+    clear();
+  }
+});
+
+function pick(id){
+  if (mode === 'explore') {
+    if (selA === id) {
+      selA = null; 
+      clear();
+    } else {
+      selA = id; 
+      renderExplore();
+    }
+  } else {
+    // Compare Mode toggling mechanism
+    if (selA === id) {
+      selA = selB; // Shift B up if A is deselected
+      selB = null;
+    } else if (selB === id) {
+      selB = null;
+    } else {
+      if (!selA) { selA = id; }
+      else if (!selB) { selB = id; }
+      else { selB = id; }
+    }
+    
+    if (!selA && !selB) { clear(); }
+    else if (selA && !selB) { previewA(); }
+    else { renderCompare(); }
+  }
+}
+
+function clearClasses(){
+  map.classList.remove('active');
+  Object.values(elOf).forEach(e => e.className = 'node');
+  svg.innerHTML = '';
+}
+
+function clear(){
+  clearClasses();
+  lastDraw = null; // Important reset fix so resizes don't re-draw old phantom lines
+  info.innerHTML = mode === 'explore'
+    ? `<p class="hint">Click any box to trace its full dependency lineage downward — and the systems built on it upward.</p>`
+    : `<p class="hint">Pick a first architecture, then a second. Shared substrate lights up gold; the deeper you go, the more they share.</p>`;
+}
+
+// ---- explore render
+function renderExplore(){
+  clearClasses();
+  const anc = ancestors(selA), desc = descendants(selA);
+  map.classList.add('active');
+  
+  elOf[selA].classList.add('sel');
+  anc.forEach(x => elOf[x].classList.add('lin'));
+  desc.forEach(x => elOf[x].classList.add('up'));
+  
+  const active = new Set([selA, ...anc, ...desc]);
+  drawEdges(m => {
+    const dr = [];
+    DEPS[m].forEach(d => { if(active.has(d)) dr.push([d, edgeColorExplore(m, d, anc, desc)]); });
+    return dr;
+  }, active);
+  
+  const dDeps = DEPS[selA].map(d => `<span class="tag">${BY[d].t}</span>`).join('') || '<span class="hint">none</span>';
+  const dUse = USERS[selA].filter(u => BY[u].layer === 'systems').map(u => `<span class="tag">${BY[u].t}</span>`).join('');
+  
+  info.innerHTML = `<div class="meta mono">${layerName(selA)}</div>
+    <p class="ttl">${BY[selA].t}</p>
+    <p>${BY[selA].desc}</p>
+    <div class="grp"><b>Builds directly on:</b><br>${dDeps}</div>
+    ${dUse ? `<div class="grp"><b>Powers:</b><br>${dUse}</div>` : ''}
+    <div class="grp hint">${anc.size} total dependencies down to the math.</div>`;
+}
+
+function edgeColorExplore(m, d, anc, desc){
+  if (desc.has(m) || desc.has(d)) return 'var(--up)';
+  return 'var(--cyan)';
+}
+
+// ---- compare render
+function previewA(){
+  clearClasses(); map.classList.add('active');
+  const anc = ancestors(selA);
+  elOf[selA].classList.add('sela');
+  anc.forEach(x => elOf[x].classList.add('aonly'));
+  const active = new Set([selA, ...anc]);
+  drawEdges(m => DEPS[m].filter(d => active.has(d)).map(d => [d, 'var(--cyan)']), active);
+  
+  info.innerHTML = `<div class="meta mono">Compare · pick a second</div>
+    <p class="ttl">${BY[selA].t} selected</p>
+    <p class="hint">Now click another architecture to see where they overlap.</p>`;
+}
+
+function renderCompare(){
+  clearClasses(); map.classList.add('active');
+  const A = new Set([selA, ...ancestors(selA)]);
+  const B = new Set([selB, ...ancestors(selB)]);
+  const shared = new Set([...A].filter(x => B.has(x)));
+  
+  N.forEach(n => {
+    const e = elOf[n.id];
+    if(n.id === selA) { e.classList.add('sela'); return; }
+    if(n.id === selB) { e.classList.add('selb'); return; }
+    if(shared.has(n.id)) e.classList.add('shared');
+    else if(A.has(n.id)) e.classList.add('aonly');
+    else if(B.has(n.id)) e.classList.add('bonly');
+  });
+  
+  const active = new Set([...A, ...B]);
+  drawEdges(m => {
+    const dr = [];
+    DEPS[m].forEach(d => {
+      if(!active.has(d)) return;
+      const inA = A.has(m) && A.has(d), inB = B.has(m) && B.has(d);
+      dr.push([d, (inA && inB) ? 'var(--gold)' : inA ? 'var(--cyan)' : 'var(--magenta)']);
+    });
+    return dr;
+  }, active);
+  
+  // order expanded to fully cover possible upstream shared traits
+  const order = ["systems", "architectures", "mechanisms", "primitives", "learning", "foundations"];
+  let groups = '';
+  order.forEach(L => {
+    const items = [...shared].filter(x => BY[x].layer === L);
+    if(items.length) groups += `<div class="grp"><b>${LAYERS.find(l=>l.id===L).name}:</b> `+
+      items.map(x => `<span class="tag">${BY[x].t}</span>`).join('') + `</div>`;
+  });
+  
+  info.innerHTML = `<div class="meta mono">Overlap</div>
+    <p class="ttl"><span style="color:var(--cyan)">${BY[selA].t}</span> <span class="hint">∩</span> <span style="color:var(--magenta)">${BY[selB].t}</span></p>
+    <p>They share <b class="seam">${shared.size}</b> substrate nodes. Each is its own mechanism story up top, but downward they collapse onto the same mathematics.</p>
+    ${groups || '<div class="grp hint">No shared substrate — fully disjoint lineages.</div>'}`;
+}
+
+// ---- edge drawing (DOM-measured, robust against scrolling & resizing)
+let lastDraw = null;
+function drawEdges(getDeps, active){
+  lastDraw = { getDeps, active };
+  svg.innerHTML = '';
+  
+  const mr = map.getBoundingClientRect();
+  const W = map.clientWidth, H = map.clientHeight;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W); 
+  svg.setAttribute('height', H);
+  
+  const center = id => {
+    const r = elOf[id].getBoundingClientRect();
+    return { x: r.left - mr.left + r.width / 2, y: r.top - mr.top + r.height / 2 };
+  };
+  
+  const frag = document.createDocumentFragment();
+  active.forEach(m => {
+    getDeps(m).forEach(([d, color]) => {
+      const a = center(m), b = center(d);
+      const midY = (a.y + b.y) / 2;
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${a.x} ${a.y} C ${a.x} ${midY}, ${b.x} ${midY}, ${b.x} ${b.y}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', color);
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('stroke-opacity', '0.85');
+      path.setAttribute('stroke-linecap', 'round');
+      
+      frag.appendChild(path);
+    });
+  });
+  svg.appendChild(frag);
+}
+
+let rt;
+window.addEventListener('resize', () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => {
+    if (lastDraw) drawEdges(lastDraw.getDeps, lastDraw.active);
+  }, 120);
+});
+
+clear();
+</script>
+</body>
+</html>
