@@ -1,2 +1,2 @@
-# Dependency_Map_of_AI
-Dependency Map of AI
+
+### [The Dependency Map of AI](https://stocus.github.io/Dependency_Map_of_AI/)
